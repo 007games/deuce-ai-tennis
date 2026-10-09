@@ -1,0 +1,6 @@
+time.sleep(6)
+pg.click('.tabs button[data-m="play"]')
+time.sleep(2)
+pg.click('#start')
+time.sleep(1.5)
+pg.mouse.move(700, 330)

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0a1224">
+<title>DEUCE · AI Tennis</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230a1224'/%3E%3Ccircle cx='32' cy='32' r='16' fill='%23d9f24f'/%3E%3Cpath d='M18 22c8 4 8 16 0 20M46 22c-8 4-8 16 0 20' stroke='%23fff' stroke-width='3' fill='none'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+<div id="hud">
+  <div class="score" id="score">
+    <div class="srow" id="s0"><i class="srv"></i><span class="nm">–</span><span class="sets"></span><span class="gm">0</span><span class="pt">0</span></div>
+    <div class="srow" id="s1"><i class="srv"></i><span class="nm">–</span><span class="sets"></span><span class="gm">0</span><span class="pt">0</span></div>
+    <div class="sub" id="s-sub">DEUCE · AI TENNIS</div>
+  </div>
+
+  <aside class="panel" id="panel">
+    <div class="tabs"><button data-m="watch" class="on">Watch AI</button><button data-m="play">Play vs AI</button></div>
+    <section id="p-watch">
+      <p class="match" id="w-match">Loading…</p>
+      <div class="speeds" id="speeds">
+        <button data-s="0">❚❚</button><button data-s="1" class="on">1×</button><button data-s="2">2×</button><button data-s="4">4×</button><button data-s="8">8×</button>
+      </div>
+      <button class="ghost" id="w-next">Next match ›</button>
+    </section>
+    <section id="p-play" hidden>
+      <p class="hint">Pick your opponent. Levels are AI champions saved during training, from first steps to the current best.</p>
+      <ol class="levels" id="levels"></ol>
+      <div class="fmt"><label><input type="radio" name="fmt" value="4" checked> Short set (4 games)</label><label><input type="radio" name="fmt" value="6"> Full set (6 games)</label></div>
+      <button class="go" id="start">Start match</button>
+      <button class="ghost" id="quit" hidden>Quit match</button>
+    </section>
+  </aside>
+
+  <section class="train" id="train">
+    <div class="trow"><span class="k">Training</span><b id="t-gen">gen –</b></div>
+    <div class="trow"><span class="k">Best AI rating</span><b id="t-elo">–</b></div>
+    <canvas id="chart" width="440" height="120"></canvas>
+    <div class="legend"><span><i style="background:#d9f24f"></i>shots per point</span><span><i style="background:#7fd3ff"></i>rating</span></div>
+    <button class="reset" id="reset">Reset AI to zero</button>
+  </section>
+
+  <div id="keys" hidden>
+    <b>You are the near player.</b> Move: WASD / arrows · Aim: mouse over the far court · Hold <kbd>Space</kbd> lob · Hold <kbd>Shift</kbd> slice · Serve: click / <kbd>Enter</kbd>
+  </div>
+  <div id="touch" hidden>
+    <div id="stick"><div id="knob"></div></div>
+    <div class="tbtns"><button id="b-serve">SERVE</button><button id="b-lob">LOB</button><button id="b-slice">SLICE</button></div>
+  </div>
+  <div id="banner"></div>
+  <button id="quit2" class="quit2">✕ Quit</button>
+  <button id="fs" class="fs" title="Fullscreen"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg></button>
+</div>
+<div id="loading"><div class="spin"></div><p>Preparing centre court…</p></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

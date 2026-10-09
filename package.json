@@ -1,0 +1,8 @@
+{
+  "name": "deuce-ai-tennis",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": { "start": "node server/index.js" },
+  "dependencies": { "three": "0.169.0" }
+}

@@ -1,0 +1,23 @@
+# DEUCE - AI tennis.  Viewer: http://<host>:8452   Phone link: docker logs deuce-tunnel 2>&1 | grep trycloudflare
+services:
+  deuce:
+    build: .
+    container_name: deuce
+    restart: unless-stopped
+    ports:
+      - "8452:8080"
+    cpus: 8                     # hard cap so training never takes over the machine
+    environment:
+      - WORKERS=8
+      - GEN_INTERVAL_MS=1000
+    volumes:
+      - ./data:/app/data
+      - ./public:/app/public:ro
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: deuce-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --protocol http2 --url http://deuce:8080
+    depends_on:
+      - deuce
