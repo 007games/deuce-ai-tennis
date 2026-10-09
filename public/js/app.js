@@ -1,7 +1,7 @@
 // DEUCE viewer: watch the self-trained AI play itself, or play against a saved champion yourself.
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { createMatch, step, aiController, pointLabel, interception, DT, COURT } from '/shared/tennis.js';
+import { createMatch, step, aiController, pointLabel, DT, COURT, CONTACT_AHEAD } from '/shared/tennis.js';
 import { buildStadium } from './stadium.js';
 import { makePlayer } from './players3d.js';
 
@@ -376,15 +376,23 @@ function render(dt) {
   ballPrev.copy(ballMesh.position);
   // players
   match.players.forEach((p, i) => {
-    const ic = interception(match, p);
-    const prepare = ic && ic.t < 0.45 ? 1 - ic.t / 0.45 : 0;
+    // seconds until the ball reaches this player's contact point (null if it is not coming)
+    let contactT = null, ballDX = 0;
+    if (b.live && b.lastHitter !== i && match.phase === 'rally' && !(b.serve && b.bounces === 0 && false)) {
+      const fwd = (b.z - p.z) * p.sign - CONTACT_AHEAD;
+      const vf = -b.vz * p.sign;
+      if (vf > 0.5 && fwd > -0.3) {
+        contactT = Math.max(0, fwd / vf);
+        ballDX = (b.x + b.vx * contactT - p.x) * p.sign;      // local x of the ball at contact
+      }
+    }
     const serving = match.phase === 'serve' && match.score.server === i;
     const turn = Math.atan2((b.x - p.x) * p.sign, Math.max(1, (b.z - p.z) * p.sign)) * 0.4;
     views[i].update(p, p.sign, {
       speed: Math.hypot(p.vx, p.vz),
       swing: p.swing, swingType: p.swingType === 2 ? 2 : swingSide[i],
       tossing: serving ? Math.min(1, Math.max(0, (match.phaseT - 0.2) / 0.5)) : 0,
-      prepare, ballDX: ic ? -(ic.x - p.x) * p.sign : 0, turn: -turn * p.sign,
+      contactT, forehand: ballDX < 0, turn: -turn * p.sign,
     }, dt * speed);
   });
   if (mode === 'play') {

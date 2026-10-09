@@ -114,32 +114,40 @@ export function makePlayer({ shirt = 0xffffff, shorts = 0x1b2a4a, skin = 0, hat 
       // arms: default carry
       left.rotation.set(-s * 0.5 * run + 0.25, 0, 0.25);
       right.rotation.set(s * 0.4 * run + 0.5, 0, -0.35);
-      const sw = ctx.swing;               // 1 -> 0 over the stroke
-      if (ctx.tossing > 0) {
-        // serve: left arm tosses, racket arm goes up behind the head
-        left.rotation.set(Math.PI * 0.95 * ctx.tossing, 0, 0.15);
-        right.rotation.set(2.4 * ctx.tossing, 0, 0);
-        torso.rotation.y = 0.5 * ctx.tossing;
-      }
+      // Stroke timing. Racket yaw for the right arm (raised to the side): forehand contact ~0.3 rad
+      // (right, slightly in front), backhand contact ~2.85 (left, slightly in front).
+      const FH = { back: -1.6, contact: 0.3, finish: 2.2 };
+      const BH = { back: 3.9, contact: 2.85, finish: 1.0 };
+      const ease = (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      const strokePose = (yaw, fh, k) => {
+        right.rotation.set(0.15, yaw, -1.25 * k);
+        if (!fh) left.rotation.set(0.2, yaw - 0.4, 1.1 * k);    // two-handed backhand
+        torso.rotation.y = (fh ? -0.6 : 0.7) * (1 - Math.min(1, Math.abs(yaw - (fh ? FH.back : BH.back)) / 2.2)) + (fh ? 0.5 : -0.5) * Math.max(0, (fh ? yaw - FH.contact : BH.contact - yaw) / 2);
+      };
+      const sw = ctx.swing;               // 1 -> 0 after the ball was struck: follow-through
       if (sw > 0) {
-        const t = 1 - sw;
-        const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        const e = ease(1 - sw);
         if (ctx.swingType === 2) {
-          right.rotation.set(2.4 + 2.7 * e, 0, 0);
-          torso.rotation.y = 0.5 - 0.9 * e;
-        } else if (ctx.swingType === 0) {
-          right.rotation.set(0.15, -1.5 + 3.2 * e, -1.25);
-          torso.rotation.y = -0.6 + 1.2 * e;
+          right.rotation.set(3.7 + 1.5 * e, 0, 0);
+          torso.rotation.y = 0.2 - 0.6 * e;
         } else {
-          right.rotation.set(0.15, 3.7 - 2.5 * e, -1.25);
-          left.rotation.set(0.2, 3.4 - 2.4 * e, 1.1);
-          torso.rotation.y = 0.7 - 1.2 * e;
+          const P = ctx.swingType === 0 ? FH : BH;
+          strokePose(P.contact + (P.finish - P.contact) * e, ctx.swingType === 0, 1);
         }
-      } else if (ctx.prepare > 0) {
-        // take the racket back before the ball arrives
-        const k = ctx.prepare;
-        if (ctx.ballDX >= 0) { right.rotation.set(0.15, -1.5 * k, -1.25 * k); torso.rotation.y = -0.6 * k; }
-        else { right.rotation.set(0.15, 3.7 * k + 0.5 * (1 - k), -1.25 * k); torso.rotation.y = 0.7 * k; }
+      } else if (ctx.contactT !== null && ctx.contactT < 0.75) {
+        // take the racket back while the ball approaches, then swing forward to meet it at contact
+        const P = ctx.forehand ? FH : BH;
+        const fwdPhase = 0.2;                              // forward swing duration (s)
+        let yaw, k;
+        if (ctx.contactT > fwdPhase) {
+          k = ease(Math.min(1, 1 - (ctx.contactT - fwdPhase) / (0.75 - fwdPhase)));
+          yaw = (ctx.forehand ? -0.4 : 3.3) * (1 - k) + P.back * k;
+        } else {
+          k = 1;
+          const f = ease(1 - ctx.contactT / fwdPhase);
+          yaw = P.back + (P.contact - P.back) * f;
+        }
+        strokePose(yaw, ctx.forehand, k);
       }
     },
   };

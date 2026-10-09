@@ -266,7 +266,7 @@ export class League {
       const now = Date.now();
       win.push(now); win = win.filter(t => now - t < 60000);
       this.gensPerMin = win.length * 60000 / Math.max(now - win[0], 1000);
-      if (now - lastSave > 30000) { this.save(); lastSave = now; }
+      if (now - lastSave > 10000) { this.save(); lastSave = now; }
       await new Promise(r => setTimeout(r, Math.max(5, this.genInterval - (Date.now() - t0))));
     }
   }

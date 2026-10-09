@@ -12,6 +12,7 @@ const G = 9.81;
 const DRAG = 0.0175;          // per metre (0.5 rho Cd A / m)
 const MAGNUS = 0.0065;        // topspin dip per (m/s)^2
 const REACH = 1.45;           // racket reach (horizontal, m)
+export const CONTACT_AHEAD = 0.45;   // the ball is struck about this far in front of the body
 const PLAYER = { vmax: 7.4, acc: 22 };
 
 export const INPUTS = 22;
@@ -444,10 +445,12 @@ function rallyStep(m, ctrls) {
     if (b.serve && b.bounces === 0) continue;               // must let the serve bounce
     if (b.bounces > 1) continue;
     if (b.y < 0.1 || b.y > 2.7) continue;
-    const dx = b.x - p.x, dz = b.z - p.z;
-    const reach = Math.hypot(dx, dz);
-    if (reach > REACH) continue;
-    hit(m, p, ctrls[p.side], reach);
+    // contact point: beside the body and a little in front of it (like a real stroke), not the
+    // first moment the ball comes within reach
+    const fwd = (b.z - p.z) * p.sign;                       // + = ball still in front of the player
+    const lat = Math.abs(b.x - p.x);
+    if (fwd > CONTACT_AHEAD || fwd < -0.7 || lat > REACH) continue;
+    hit(m, p, ctrls[p.side], Math.hypot(lat, Math.max(0, fwd)));
     break;
   }
   // approach tracking (training signal: did the player get to the ball?)
