@@ -6,6 +6,34 @@ const skinTones = [0xe8b893, 0xc68a62, 0x8d5a3b, 0xf1c9a5];
 
 function mat(color, rough = 0.6) { return new THREE.MeshStandardMaterial({ color, roughness: rough }); }
 
+// shoulder -> string bed distance (arm 0.62 + racket 0.46), shoulder positions in the torso frame
+export const REACH_L = 1.08;
+const SHOULDER_R = new THREE.Vector3(-0.24, 0.48, 0);
+const SHOULDER_L = new THREE.Vector3(0.24, 0.48, 0);
+const n = (x, y, z) => new THREE.Vector3(x, y, z).normalize();
+const CARRY = n(-0.35, -0.85, 0.4);
+const CARRY_L = n(0.3, -0.9, 0.3);
+const FH_BACK = n(-0.55, 0.25, -0.8);
+const FH_FINISH = n(0.75, 0.5, 0.42);
+const BH_BACK = n(0.75, 0.15, -0.65);
+const BH_BACK_L = n(0.55, 0.0, -0.8);
+const BH_FINISH = n(-0.7, 0.5, 0.5);
+const SERVE_BACK = n(-0.15, -0.25, -0.95);
+const SERVE_FINISH = n(0.45, -0.65, 0.6);
+const tmp = new THREE.Vector3();
+
+/** normalised lerp between two unit vectors */
+function nlerp(a, b, t) {
+  return new THREE.Vector3().copy(a).multiplyScalar(1 - t).addScaledVector(b, t).normalize();
+}
+
+/** rotate an arm (rotation order YZX, hanging along -y) so it points along `dir` (torso frame) */
+function aim(arm, dir) {
+  const tz = Math.acos(Math.max(-1, Math.min(1, -dir.y)));
+  const ty = Math.sin(tz) > 1e-4 ? Math.atan2(-dir.z, dir.x) : 0;
+  arm.rotation.set(0, ty, tz);
+}
+
 export function makePlayer({ shirt = 0xffffff, shorts = 0x1b2a4a, skin = 0, hat = 0xffffff } = {}) {
   const root = new THREE.Group();
   const body = new THREE.Group();
@@ -87,7 +115,7 @@ export function makePlayer({ shirt = 0xffffff, shorts = 0x1b2a4a, skin = 0, hat 
   right.add(racket);
 
   root.traverse(o => { if (o.isMesh) o.castShadow = true; });
-  const state = { phase: 0, lastX: 0, lastZ: 0 };
+  const state = { phase: 0, lastX: 0, lastZ: 0, dHit: null, dHitL: null, hitFH: true, finish: FH_FINISH };
 
   return {
     root,
@@ -96,6 +124,7 @@ export function makePlayer({ shirt = 0xffffff, shorts = 0x1b2a4a, skin = 0, hat 
      */
     update(p, facing, ctx, dt) {
       root.position.set(p.x, 0, p.z);
+      body.rotation.z = 0;
       // face the net, turned a little towards the ball
       root.rotation.y = (facing > 0 ? 0 : Math.PI) + Math.max(-0.5, Math.min(0.5, ctx.turn || 0));
       const speed = ctx.speed;
@@ -114,41 +143,78 @@ export function makePlayer({ shirt = 0xffffff, shorts = 0x1b2a4a, skin = 0, hat 
       // arms: default carry
       left.rotation.set(-s * 0.5 * run + 0.25, 0, 0.25);
       right.rotation.set(s * 0.4 * run + 0.5, 0, -0.35);
-      // Stroke timing. Racket yaw for the right arm (raised to the side): forehand contact ~0.3 rad
-      // (right, slightly in front), backhand contact ~2.85 (left, slightly in front).
-      const FH = { back: -1.6, contact: 0.3, finish: 2.2 };
-      const BH = { back: 3.9, contact: 2.85, finish: 1.0 };
+      // ---- strokes: aim the racket at the ball (simple IK) -------------------------------------
+      // The right arm + racket is one rigid lever from the shoulder to the string bed (REACH_L).
+      // Direction vectors are in the torso frame: +z towards the net, -x = the player's right.
       const ease = (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-      const strokePose = (yaw, fh, k) => {
-        right.rotation.set(0.15, yaw, -1.25 * k);
-        if (!fh) left.rotation.set(0.2, yaw - 0.4, 1.1 * k);    // two-handed backhand
-        torso.rotation.y = (fh ? -0.6 : 0.7) * (1 - Math.min(1, Math.abs(yaw - (fh ? FH.back : BH.back)) / 2.2)) + (fh ? 0.5 : -0.5) * Math.max(0, (fh ? yaw - FH.contact : BH.contact - yaw) / 2);
-      };
-      const sw = ctx.swing;               // 1 -> 0 after the ball was struck: follow-through
-      if (sw > 0) {
-        const e = ease(1 - sw);
-        if (ctx.swingType === 2) {
-          right.rotation.set(3.7 + 1.5 * e, 0, 0);
-          torso.rotation.y = 0.2 - 0.6 * e;
-        } else {
-          const P = ctx.swingType === 0 ? FH : BH;
-          strokePose(P.contact + (P.finish - P.contact) * e, ctx.swingType === 0, 1);
-        }
-      } else if (ctx.contactT !== null && ctx.contactT < 0.75) {
-        // take the racket back while the ball approaches, then swing forward to meet it at contact
-        const P = ctx.forehand ? FH : BH;
-        const fwdPhase = 0.2;                              // forward swing duration (s)
-        let yaw, k;
-        if (ctx.contactT > fwdPhase) {
-          k = ease(Math.min(1, 1 - (ctx.contactT - fwdPhase) / (0.75 - fwdPhase)));
-          yaw = (ctx.forehand ? -0.4 : 3.3) * (1 - k) + P.back * k;
-        } else {
-          k = 1;
-          const f = ease(1 - ctx.contactT / fwdPhase);
-          yaw = P.back + (P.contact - P.back) * f;
-        }
-        strokePose(yaw, ctx.forehand, k);
+      const serve = ctx.swingType === 2;
+      const fh = ctx.forehand;
+      const BACK = serve ? SERVE_BACK : fh ? FH_BACK : BH_BACK;
+      const FINISH = serve ? SERVE_FINISH : (state.hitFH ? FH_FINISH : BH_FINISH);
+      let crouchK = 0, crouchNeed = 0;
+
+      if (ctx.tossing > 0) {
+        // serve: left arm tosses, racket loops up behind the head into the trophy pose
+        left.rotation.set(Math.PI * 0.95 * ctx.tossing, 0, 0.15);
+        torso.rotation.y = 0.45 * ctx.tossing;
+        aim(right, nlerp(CARRY, SERVE_BACK, ease(ctx.tossing)));
       }
+
+      if (ctx.swing > 0 && state.dHit) {
+        // follow-through from the contact pose to the finish
+        const e = ease(1 - ctx.swing);
+        body.rotation.z = (state.lean || 0) * (1 - e);
+        torso.rotation.y = state.hitFH === null ? -0.5 * e : (state.hitFH ? 0.65 : -0.65) * e;
+        aim(right, nlerp(state.dHit, state.finish, e));
+        if (state.hitFH === false) aim(left, nlerp(state.dHitL || state.dHit, state.finish, e));
+      } else if (ctx.contactT !== null && ctx.contactT < 0.75 && ctx.contactPos) {
+        const fwd = 0.2;                                   // forward swing duration (s)
+        const back = ctx.contactT > fwd;
+        const k = back ? ease(Math.min(1, 1 - (ctx.contactT - fwd) / (0.75 - fwd))) : 1;
+        const f = back ? 0 : ease(1 - ctx.contactT / fwd);
+        // crouch for low balls so the lever can reach them
+        const cp = ctx.contactPos;
+        const h = Math.hypot(cp.x - p.x, cp.z - p.z);
+        const shoulderY = 1.48;
+        const needY = cp.y + Math.sqrt(Math.max(0, REACH_L * REACH_L - h * h));
+        crouchNeed = Math.max(0, Math.min(0.6, shoulderY - needY));
+        crouchK = k;
+        body.position.y -= crouchNeed * crouchK;
+        legs[0].knee.rotation.x += crouchNeed * crouchK * 2.2;
+        legs[1].knee.rotation.x += crouchNeed * crouchK * 2.2;
+        legs[0].hip.rotation.x -= crouchNeed * crouchK * 1.1;
+        legs[1].hip.rotation.x -= crouchNeed * crouchK * 1.1;
+        // shoulder turn: coil on the backswing, square to the net at contact
+        torso.rotation.y = (fh ? -0.6 : 0.6) * k * (1 - f);
+        // lean sideways towards wide balls (extends the reach like a real stretch)
+        const side = (cp.x - p.x) * facing;                 // local x of the ball, - = player's right
+        const wide = Math.max(0, Math.abs(side) - 0.9);
+        state.lean = Math.min(0.4, wide * 0.6) * Math.sign(-side) * k;
+        body.rotation.z = state.lean;
+        root.updateMatrixWorld(true);
+        const dC = torso.worldToLocal(tmp.copy(cp)).sub(SHOULDER_R).normalize();
+        const dir = back ? nlerp(CARRY, BACK, k) : nlerp(BACK, dC, f);
+        aim(right, dir);
+        if (!fh) {
+          const dL = torso.worldToLocal(tmp.copy(cp)).sub(SHOULDER_L).normalize();
+          aim(left, back ? nlerp(CARRY_L, BH_BACK_L, k) : nlerp(BH_BACK_L, dL, f));
+          state.dHitL = dL;
+        }
+        state.dHit = dC;
+        state.hitFH = fh;
+        state.finish = fh ? FH_FINISH : BH_FINISH;
+      }
+      if (ctx.hitNow) {
+        // the ball was just struck: freeze the exact contact pose as the start of the follow-through
+        if (ctx.hitPos) {
+          root.updateMatrixWorld(true);
+          state.dHit = torso.worldToLocal(tmp.copy(ctx.hitPos)).sub(SHOULDER_R).normalize();
+          state.dHitL = torso.worldToLocal(tmp.copy(ctx.hitPos)).sub(SHOULDER_L).normalize();
+        }
+        if (serve) { state.hitFH = null; state.finish = SERVE_FINISH; }
+        else { state.hitFH = ctx.forehand; state.finish = ctx.forehand ? FH_FINISH : BH_FINISH; }
+      }
+      void FINISH;
     },
   };
 }

@@ -11,6 +11,9 @@ import { mulberry32, gaussian, randomGenome, genomeSize } from '../shared/tennis
 
 const NAMES = ['Ace', 'Volley', 'Lob', 'Slice', 'Smash', 'Drop', 'Spin', 'Rally', 'Baseline', 'Net', 'Topspin', 'Chip', 'Kick', 'Flat', 'Swing', 'Deuce'];
 const FIRST = ['Rafa', 'Nina', 'Bjorn', 'Iga', 'Novak', 'Coco', 'Andy', 'Elena', 'Carlos', 'Aryna', 'Jannik', 'Ons', 'Holger', 'Mirra', 'Taylor', 'Leylah', 'Casper', 'Jasmine', 'Felix', 'Qinwen'];
+// bump when the game rules change: saved champions are re-rated under the new rules
+const RULES_VERSION = 2;
+
 export const LEVEL_NAMES = ['Beginner', 'Novice', 'Club', 'Club+', 'County', 'Regional', 'National', 'Pro', 'Elite', 'Champion'];
 
 function encode(f32) { return Buffer.from(f32.buffer, f32.byteOffset, f32.byteLength).toString('base64'); }
@@ -53,7 +56,7 @@ export class League {
     try {
       const raw = JSON.parse(fs.readFileSync(this.statePath(), 'utf8'));
       if (raw.size !== this.size) throw new Error('network shape changed');
-      Object.assign(this, { generation: raw.generation, nextId: raw.nextId, history: raw.history || [], sigma: raw.sigma || 0.15, resets: raw.resets || 0 });
+      Object.assign(this, { generation: raw.generation, nextId: raw.nextId, history: raw.history || [], sigma: raw.sigma || 0.15, resets: raw.resets || 0, rulesVersion: raw.rulesVersion || 1 });
       this.population = raw.population.map(p => ({ ...p, genome: decode(p.genome) }));
       this.hall = raw.hall.map(h => ({ ...h, genome: decode(h.genome) }));
       console.log(`[league] resumed at generation ${this.generation} (${this.hall.length} champions in the hall)`);
@@ -67,7 +70,7 @@ export class League {
   save() {
     fs.mkdirSync(this.dataDir, { recursive: true });
     const data = {
-      size: this.size, generation: this.generation, nextId: this.nextId, history: this.history, sigma: this.sigma, resets: this.resets,
+      size: this.size, generation: this.generation, nextId: this.nextId, history: this.history, sigma: this.sigma, resets: this.resets, rulesVersion: RULES_VERSION,
       population: this.population.map(p => ({ id: p.id, born: p.born, genome: encode(p.genome) })),
       hall: this.hall.map(h => ({ ...h, genome: encode(h.genome) })),
     };
@@ -114,9 +117,12 @@ export class League {
   }
 
   fitness(s) {
-    // win points; while nobody can rally yet, reward getting to the ball and putting it back in play
+    // win points - but also return serves and keep rallies going, otherwise the league drifts into
+    // pure serve-and-ace tennis that nobody learns anything from
     const total = Math.max(1, s.total);
-    return s.points / total + 0.03 * s.inPlay + 0.01 * s.contacts + 0.25 * s.approach - 0.02 * s.df;
+    const returnRate = s.servesFaced ? s.returnsIn / s.servesFaced : 0;
+    // (no reward per racket contact: that was exploited by endless net volleys)
+    return s.points / total + 0.35 * returnRate + 0.02 * s.inPlay + 0.25 * s.approach - 0.02 * s.df;
   }
 
   async step() {
@@ -150,8 +156,11 @@ export class League {
     const sorted = pop.slice().sort((a, b) => b.fit - a.fit);
     const best = sorted[0];
     const rally = res.reduce((a, [x, y]) => a + (x.inPlay + y.inPlay) / Math.max(1, x.total), 0) / res.length;
+    let faced = 0, returned = 0;
+    for (const [x, y] of res) { faced += x.servesFaced + y.servesFaced; returned += x.returnsIn + y.returnsIn; }
+    const returnRate = faced ? returned / faced : 0;
     this.history.push({ g: this.generation, best: +best.fit.toFixed(3), mean: +(pop.reduce((a, p) => a + p.fit, 0) / pop.length).toFixed(3),
-      rally: +rally.toFixed(2), elo: this.hall.length ? Math.round(Math.max(...this.hall.map(h => h.elo))) : 1000, ms, t: Date.now() });
+      rally: +rally.toFixed(2), ret: +returnRate.toFixed(3), elo: this.hall.length ? Math.round(Math.max(...this.hall.map(h => h.elo))) : 1000, ms, t: Date.now() });
     if (this.history.length > 20000) this.history = thin(this.history, 10000);
 
     if (this.generation % 15 === 0) await this.enterHall(best);
@@ -241,6 +250,32 @@ export class League {
     return out;
   }
 
+  /** round-robin re-rating of the whole hall (used after a rules change) */
+  async rerateHall() {
+    if (this.hall.length < 2) return;
+    for (const h of this.hall) h.elo = 1000;
+    for (let round = 0; round < 4; round++) {
+      const games = [];
+      for (let i = 0; i < this.hall.length; i++) {
+        for (let k = 0; k < 2; k++) {
+          let j = Math.floor(this.rng() * this.hall.length);
+          if (j === i) j = (j + 1) % this.hall.length;
+          games.push([i, j]);
+        }
+      }
+      const res = await this.playAll(games.map(([i, j], k) => [this.hall[i].genome, this.hall[j].genome, Math.floor(this.rng() * 1e9) + k]));
+      res.forEach(([a], k) => {
+        const [i, j] = games[k];
+        const A = this.hall[i], B = this.hall[j];
+        const score = a.points / Math.max(1, a.total);
+        const exp = 1 / (1 + Math.pow(10, (B.elo - A.elo) / 400));
+        A.elo += 24 * (score - exp) * 2;
+        B.elo -= 24 * (score - exp) * 2;
+      });
+    }
+    console.log(`[league] re-rated ${this.hall.length} champions under rules v${RULES_VERSION}`);
+  }
+
   requestReset() { this.resetRequested = true; }
   doReset() {
     this.resetRequested = false;
@@ -257,6 +292,8 @@ export class League {
   async run() {
     if (!this.load()) this.seed();
     this.startWorkers();
+    if ((this.rulesVersion || RULES_VERSION) !== RULES_VERSION) await this.rerateHall();
+    this.rulesVersion = RULES_VERSION;
     console.log(`[league] self-play with ${this.workerCount} workers, population ${this.popSize}`);
     let lastSave = Date.now(), win = [];
     for (;;) {

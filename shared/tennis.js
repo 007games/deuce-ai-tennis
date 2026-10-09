@@ -11,9 +11,11 @@ export const BALL_R = 0.033;
 const G = 9.81;
 const DRAG = 0.0175;          // per metre (0.5 rho Cd A / m)
 const MAGNUS = 0.0065;        // topspin dip per (m/s)^2
-const REACH = 1.45;           // racket reach (horizontal, m)
+const REACH = 1.45;           // racket reach (horizontal, m): arm + racket + a sideways lean
 export const CONTACT_AHEAD = 0.45;   // the ball is struck about this far in front of the body
 const PLAYER = { vmax: 7.4, acc: 22 };
+const NET_GAP = 1.2;          // closest a player may stand to the net (m)
+const REACTION = 0.28;        // seconds a player needs after the opponent's shot before striking
 
 export const INPUTS = 22;
 export const LAYERS = [INPUTS, 32, 24, 7];
@@ -122,7 +124,7 @@ export function createMatch({ seed = 1, format = { sets: 1, games: 4 }, training
     pred: [], predIdx: 0,
     events: [],                       // for the viewer: {type, ...}
     lastPoint: null,
-    rallyHits: 0, pointCount: 0,
+    rallyHits: 0, pointCount: 0, lastHitT: -1,
   };
   m.score.server = server >= 0 ? server : Math.floor(m.rng() * 2);
   setupServe(m);
@@ -132,7 +134,7 @@ export function createMatch({ seed = 1, format = { sets: 1, games: 4 }, training
 function newPlayer(side) {
   return { side, sign: side === 0 ? 1 : -1, x: 0, z: side === 0 ? -12 : 12, vx: 0, vz: 0, tx: 0, tz: 0, swing: 0, swingType: 0, lastDecision: 0, aim: null };
 }
-function newStats() { return { points: 0, contacts: 0, inPlay: 0, aces: 0, winners: 0, errors: 0, doubleFaults: 0, approach: 0, chances: 0 }; }
+function newStats() { return { points: 0, contacts: 0, inPlay: 0, aces: 0, winners: 0, errors: 0, doubleFaults: 0, approach: 0, chances: 0, servesFaced: 0, returnsIn: 0 }; }
 
 function deuceCourt(m) {
   const s = m.score;
@@ -152,7 +154,7 @@ function setupServe(m) {
   rcv.x = rlx * rcv.sign; rcv.z = -(COURT.halfL + 0.8) * rcv.sign;
   rcv.vx = rcv.vz = 0; rcv.tx = rcv.x; rcv.tz = rcv.z;
   const b = m.ball;
-  b.x = srv.x + 0.35 * srv.sign; b.y = 1.0; b.z = srv.z + 0.25 * srv.sign;
+  b.x = srv.x - 0.3 * srv.sign; b.y = 1.0; b.z = srv.z + 0.3 * srv.sign;   // toss on the racket side
   b.vx = b.vy = b.vz = 0; b.spin = 0; b.lastHitter = -1; b.bounces = 0; b.serve = true; b.live = false; b.held = true;
   m.phase = 'serve';
   m.phaseT = 0;
@@ -345,7 +347,8 @@ function movePlayer(m, p, c) {
   p.x += p.vx * DT; p.z += p.vz * DT;
   // stay on your own half, inside the stadium
   p.x = Math.max(-8, Math.min(8, p.x));
-  if (p.side === 0) p.z = Math.max(-17, Math.min(-0.35, p.z)); else p.z = Math.min(17, Math.max(0.35, p.z));
+  // players may not crowd the net (touching it is illegal in tennis)
+  if (p.side === 0) p.z = Math.max(-17, Math.min(-NET_GAP, p.z)); else p.z = Math.min(17, Math.max(NET_GAP, p.z));
 }
 
 function serveStep(m, ctrls) {
@@ -355,7 +358,7 @@ function serveStep(m, ctrls) {
   // toss
   if (m.phaseT > 0.25) {
     const k = Math.min(1, (m.phaseT - 0.25) / 0.5);
-    b.y = 1.0 + 1.9 * Math.sin(k * Math.PI * 0.5);
+    b.y = 1.0 + 1.55 * Math.sin(k * Math.PI * 0.5);
   }
   const ready = m.phaseT > 0.75 && (c.kind === 'ai' || c.wantsServe());
   if (!ready) {
@@ -374,18 +377,19 @@ function serveStep(m, ctrls) {
   let lz = 2.2 + shot.depth * (COURT.serviceZ - 2.5);
   const power = shot.power;
   const speed = 22 + power * 26 - (m.serveTry === 2 ? 4 : 0);
-  const sigma = 0.18 + power * power * 0.75;
+  const sigma = 0.2 + power * power * 1.0;
   lx += gaussian(m.rng) * sigma;
   lz += gaussian(m.rng) * sigma * 1.3;
-  const v = solveShot(b.x, 2.9, b.z, lx * s, lz * s, speed, shot.spin * 0.6, 0.06);
-  b.y = 2.9;
+  const v = solveShot(b.x, 2.55, b.z, lx * s, lz * s, speed, shot.spin * 0.6, 0.06);
+  b.y = 2.55;
   b.vx = v.vx; b.vy = v.vy; b.vz = v.vz; b.spin = shot.spin * 0.6;
   b.lastHitter = srv.side; b.bounces = 0; b.serve = true; b.live = true; b.held = false;
   srv.swing = 1; srv.swingType = 2;
   m.stats[srv.side].contacts++;
+  m.lastHitT = m.t;
   m.phase = 'rally';
   m.phaseT = 0;
-  m.events.push({ type: 'hit', side: srv.side, serve: true, speed });
+  m.events.push({ type: 'hit', side: srv.side, serve: true, speed, x: b.x, y: 2.55, z: b.z });
   predict(m);
   void box;
 }
@@ -416,6 +420,7 @@ function rallyStep(m, ctrls) {
           const box = serviceBox(m);
           const okBox = b.x >= box.x0 - LINE && b.x <= box.x1 + LINE && b.z >= box.z0 - LINE && b.z <= box.z1 + LINE;
           if (!okBox) return fault(m, 'out');
+          m.stats[1 - b.lastHitter].servesFaced++;          // a good serve the receiver has to deal with
         } else {
           const target = 1 - b.lastHitter;
           if (side !== target || !inCourt(b.x, b.z, target)) {
@@ -424,6 +429,7 @@ function rallyStep(m, ctrls) {
           }
         }
         m.stats[b.lastHitter].inPlay++;
+        if (!b.serve && m.rallyHits === 1) m.stats[b.lastHitter].returnsIn++;   // serve returned into play
       } else {
         // second bounce: the receiver could not get it back
         if (b.serve) m.stats[b.lastHitter].aces++;
@@ -441,7 +447,8 @@ function rallyStep(m, ctrls) {
   // hitting
   for (const p of m.players) {
     if (b.lastHitter === p.side) continue;
-    if (b.z * p.sign > 0.2) continue;                       // not on my side yet
+    if (b.z * p.sign > -0.05) continue;                     // the ball must be on my side of the net
+    if (m.t - m.lastHitT < REACTION) continue;              // human reaction time
     if (b.serve && b.bounces === 0) continue;               // must let the serve bounce
     if (b.bounces > 1) continue;
     if (b.y < 0.1 || b.y > 2.7) continue;
@@ -465,6 +472,7 @@ function rallyStep(m, ctrls) {
 
 function hit(m, p, c, reach) {
   const b = m.ball;
+  const hx = b.x, hy = b.y, hz = b.z;              // contact point (for the viewer)
   const shot = c.shot(m, p, false);
   const s = p.sign;
   const incoming = Math.hypot(b.vx, b.vy, b.vz);
@@ -487,7 +495,8 @@ function hit(m, p, c, reach) {
   p.swingType = (b.x - p.x) * s >= 0 ? 0 : 1;            // forehand on the right side (local), backhand left
   m.stats[p.side].contacts++;
   m.rallyHits++;
-  m.events.push({ type: 'hit', side: p.side, speed: Math.hypot(v.vx, v.vy, v.vz), lob: shot.lift > 0.6 });
+  m.lastHitT = m.t;
+  m.events.push({ type: 'hit', side: p.side, speed: Math.hypot(v.vx, v.vy, v.vz), lob: shot.lift > 0.6, x: hx, y: hy, z: hz });
   predict(m);
 }
 

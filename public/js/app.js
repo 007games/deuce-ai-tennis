@@ -101,6 +101,7 @@ const looks = [{ shirt: 0xf5f7fa, shorts: 0x1b2a4a, skin: 0, hat: 0xffffff }, { 
 const views = looks.map(l => makePlayer(l));
 views.forEach(v => scene.add(v.root));
 const swingSide = [0, 0];
+const hitFlag = [false, false], hitPos = [null, null];
 
 // --- audio (synthesised) ----------------------------------------------------------------------------------
 let actx = null;
@@ -130,6 +131,8 @@ function cheer(len = 1.6, vol = 0.12) {
 }
 
 // --- state ----------------------------------------------------------------------------------------------
+const FREEZE_ON_HIT = new URLSearchParams(location.search).get('freeze') === 'hit';   // visual QA
+let freezeNext = false;
 let mode = 'watch';
 let speed = 1;
 let match = null, ctrls = null, names = ['', ''], acc = 0, matchSeedT = 0;
@@ -285,6 +288,9 @@ function handleEvents() {
     if (e.type === 'hit') {
       const p = match.players[e.side];
       swingSide[e.side] = (match.ball.x - p.x) * p.sign < 0 ? 0 : 1;   // racket is in the right hand (-x local)
+      hitFlag[e.side] = true;
+      if (FREEZE_ON_HIT) freezeNext = true;
+      hitPos[e.side] = new THREE.Vector3(e.x, e.y, e.z);
       pop(e.serve ? 520 : 760, 0.09, 0.35);
     } else if (e.type === 'bounce') {
       bounceRing(e.x, e.z);
@@ -341,6 +347,7 @@ function frame(now) {
       handleEvents();
       acc -= DT;
       n++;
+      if (freezeNext) { freezeNext = false; speed = 0; acc = 0; window.__frozen = (window.__frozen || 0) + 1; break; }
     }
     if (n >= 600) acc = 0;
     updateScore();
@@ -376,23 +383,33 @@ function render(dt) {
   ballPrev.copy(ballMesh.position);
   // players
   match.players.forEach((p, i) => {
-    // seconds until the ball reaches this player's contact point (null if it is not coming)
-    let contactT = null, ballDX = 0;
-    if (b.live && b.lastHitter !== i && match.phase === 'rally' && !(b.serve && b.bounces === 0 && false)) {
+    // predicted ball position when it reaches this player's contact point
+    let contactT = null, contactPos = null, ballDX = 0;
+    if (b.live && b.lastHitter !== i && match.phase === 'rally') {
       const fwd = (b.z - p.z) * p.sign - CONTACT_AHEAD;
       const vf = -b.vz * p.sign;
       if (vf > 0.5 && fwd > -0.3) {
         contactT = Math.max(0, fwd / vf);
-        ballDX = (b.x + b.vx * contactT - p.x) * p.sign;      // local x of the ball at contact
+        // integrate the flight (with a possible bounce) to where the ball will be at contact
+        let x = b.x, y = b.y, z = b.z, vx = b.vx, vy = b.vy, vz = b.vz;
+        const h = 1 / 120;
+        for (let t = 0; t < contactT; t += h) {
+          vy -= 9.81 * h; x += vx * h; y += vy * h; z += vz * h;
+          if (y < 0.033 && vy < 0) { y = 0.033; vy = -vy * 0.74; vx *= 0.8; vz *= 0.8; }
+        }
+        contactPos = new THREE.Vector3(x, y, z);
+        ballDX = (x - p.x) * p.sign;      // local x of the ball at contact (racket side is -x)
       }
     }
+    const hitNow = hitFlag[i];
+    hitFlag[i] = false;
     const serving = match.phase === 'serve' && match.score.server === i;
     const turn = Math.atan2((b.x - p.x) * p.sign, Math.max(1, (b.z - p.z) * p.sign)) * 0.4;
     views[i].update(p, p.sign, {
       speed: Math.hypot(p.vx, p.vz),
       swing: p.swing, swingType: p.swingType === 2 ? 2 : swingSide[i],
       tossing: serving ? Math.min(1, Math.max(0, (match.phaseT - 0.2) / 0.5)) : 0,
-      contactT, forehand: ballDX < 0, turn: -turn * p.sign,
+      contactT, contactPos, forehand: ballDX < 0, turn: -turn * p.sign, hitNow, hitPos: hitPos[i],
     }, dt * speed);
   });
   if (mode === 'play') {
@@ -413,15 +430,19 @@ function drawChart(h) {
   if (!h || h.length < 2) return;
   const x0 = h[0].g, x1 = h[h.length - 1].g;
   const X = (v) => 4 + (v - x0) / Math.max(1, x1 - x0) * (W - 8);
-  const series = [['rally', '#d9f24f'], ['elo', '#7fd3ff']];
+  const series = [['rally', '#d9f24f'], ['ret', '#ff9f6b'], ['elo', '#7fd3ff']];
   for (const [k, c] of series) {
     let lo = Infinity, hi = -Infinity;
-    for (const p of h) { lo = Math.min(lo, p[k]); hi = Math.max(hi, p[k]); }
+    for (const p of h) { if (p[k] === undefined) continue; lo = Math.min(lo, p[k]); hi = Math.max(hi, p[k]); }
+    if (!isFinite(lo)) continue;
     if (k === 'rally') lo = 0;
+    if (k === 'ret') { lo = 0; hi = 1; }
     const span = hi - lo || 1;
     g.strokeStyle = c; g.lineWidth = 2 * dpr; g.beginPath();
     let sm = h[0][k];
-    h.forEach((p, i) => { sm = sm * 0.7 + p[k] * 0.3; const y = H - 4 - (sm - lo) / span * (H - 8); if (i) g.lineTo(X(p.g), y); else g.moveTo(X(p.g), y); });
+    const hk = h.filter(p => p[k] !== undefined);
+    sm = hk.length ? hk[0][k] : 0;
+    hk.forEach((p, i) => { sm = sm * 0.7 + p[k] * 0.3; const y = H - 4 - (sm - lo) / span * (H - 8); if (i) g.lineTo(X(p.g), y); else g.moveTo(X(p.g), y); });
     g.stroke();
   }
 }
