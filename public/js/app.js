@@ -495,6 +495,7 @@ $('w-next').addEventListener('click', startWatch);
 $('start').addEventListener('click', startPlay);
 $('quit').addEventListener('click', () => { $('quit').hidden = true; startWatch(); });
 $('quit2').addEventListener('click', () => { $('quit').hidden = true; startWatch(); });
+$('reset-m').addEventListener('click', () => $('reset').click());
 $('reset').addEventListener('click', async () => {
   if (!confirm('Wipe everything the AI has learned and start again from random players?\n(A backup is kept on the server.)')) return;
   await fetch('/api/reset', { method: 'POST' });

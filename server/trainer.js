@@ -12,7 +12,7 @@ import { mulberry32, gaussian, randomGenome, genomeSize } from '../shared/tennis
 const NAMES = ['Ace', 'Volley', 'Lob', 'Slice', 'Smash', 'Drop', 'Spin', 'Rally', 'Baseline', 'Net', 'Topspin', 'Chip', 'Kick', 'Flat', 'Swing', 'Deuce'];
 const FIRST = ['Rafa', 'Nina', 'Bjorn', 'Iga', 'Novak', 'Coco', 'Andy', 'Elena', 'Carlos', 'Aryna', 'Jannik', 'Ons', 'Holger', 'Mirra', 'Taylor', 'Leylah', 'Casper', 'Jasmine', 'Felix', 'Qinwen'];
 // bump when the game rules change: saved champions are re-rated under the new rules
-const RULES_VERSION = 7;
+const RULES_VERSION = 8;
 
 export const LEVEL_NAMES = ['Beginner', 'Novice', 'Club', 'Club+', 'County', 'Regional', 'National', 'Pro', 'Elite', 'Champion'];
 

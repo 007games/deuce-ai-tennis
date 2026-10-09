@@ -112,6 +112,47 @@ export function solveShot(px, py, pz, tx, tz, speed, spin, margin) {
   return best;
 }
 
+/**
+ * Rally stroke: the player decides how high to clear the net (`clear`, metres above the tape) and
+ * where to land; the pace follows from that. Low clearance = flat and fast, high = loopy and slow.
+ * Solved analytically without drag, then corrected for drag and spin with a few real flights.
+ * Returns {vx, vy, vz, speed}.
+ */
+export function solveByClearance(px, py, pz, tx, tz, clear, spin) {
+  const dx = tx - px, dz = tz - pz;
+  const D0 = Math.hypot(dx, dz);
+  const ux = dx / D0, uz = dz / D0;
+  // horizontal distance along the path to the net plane, and the net height there
+  const dn = Math.abs(uz) > 1e-6 ? -pz / uz : D0 * 0.5;
+  const hn = netHeight(px + ux * dn) + clear;
+  // Solve the two-point parabola (through the net point and the landing point) with an
+  // "effective gravity" that includes the topspin dip, then correct gently for drag.
+  let D = D0, gEff = G;
+  let out = null;
+  for (let it = 0; it < 5; it++) {
+    const det = dn * D * (dn - D);
+    const A = (-(hn - py) * D * D - dn * dn * py) / det;
+    const B = (dn * -py - D * (hn - py)) / det;
+    if (!(B > 1e-3) || !isFinite(A)) {
+      // no sensible arc through that point (e.g. contact above the clearance height): fall back
+      const v = solveShot(px, py, pz, tx, tz, 30, spin, 0.3);
+      return { ...v, speed: Math.hypot(v.vx, v.vy, v.vz) };
+    }
+    const vh = Math.sqrt(gEff / (2 * B));
+    const vy = vh * A;
+    out = { vx: ux * vh, vy, vz: uz * vh, speed: Math.hypot(vh, vy) };
+    if (out.speed > 50) { const k = 50 / out.speed; out.vx *= k; out.vy *= k; out.vz *= k; out.speed = 50; }
+    // spin dip (topspin) or lift (slice) at this pace, folded into gravity for the next pass
+    const sp = out.speed * 0.85;
+    gEff = Math.max(4, G + spin * MAGNUS * sp * sp * (spin > 0 ? 1 : 0.6));
+    const r = flyToLanding(px, py, pz, out.vx, out.vy, out.vz, spin, 4);
+    const landed = (r.x - px) * ux + (r.z - pz) * uz;
+    if (it >= 1 && Math.abs(landed - D0) < 0.2) break;
+    D *= Math.max(0.9, Math.min(1.15, D0 / Math.max(1, landed)));
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------
 // match
 export function createMatch({ seed = 1, format = { sets: 1, games: 4 }, training = false, server = -1 } = {}) {
@@ -429,7 +470,8 @@ function rallyStep(m, ctrls) {
           const target = 1 - b.lastHitter;
           if (side !== target || !inCourt(b.x, b.z, target)) {
             m.stats[b.lastHitter].errors++;
-            return pointTo(m, 1 - b.lastHitter, side !== target ? 'own side' : 'out');
+            // a ball that drops just short of the net was simply put into the net
+            return pointTo(m, 1 - b.lastHitter, side !== target ? (Math.abs(b.z) < 1.5 ? 'net' : 'own side') : 'out');
           }
         }
         m.stats[b.lastHitter].inPlay++;
@@ -488,7 +530,12 @@ function hit(m, p, c, reach) {
   let lx = shot.aimX * (COURT.halfW - 0.35);
   let lz = MIN_DEPTH + shot.depth * (COURT.halfL - MIN_DEPTH - 0.5);
   const power = shot.power;
-  const speed = 17 + power * 21;
+  void power;
+  // how high over the net the player chooses to play (0.25 m flat ... 2.75 m loopy)
+  let clearance = 0.25 + shot.lift * 2.5;
+  // pace of the intended shot (flat = fast = riskier, loopy = slow = safer)
+  const nominal = solveByClearance(b.x, b.y, b.z, lx * s, lz * s, clearance, shot.spin);
+  const pace = Math.max(0, Math.min(1, (nominal.speed - 14) / 24));
   // the harder the shot, the faster you were running, the further you stretch: the bigger the error
   // nobody is a machine: even an easy, slow ball has some scatter (base error), which ends rallies
   // A slow ball at a comfortable height, taken while balanced, is a "sitter": it can be attacked
@@ -496,23 +543,29 @@ function hit(m, p, c, reach) {
   const comfort = Math.max(0, 1 - incoming / 26) * Math.max(0, 1 - pspeed / 4) * (b.y > 0.6 && b.y < 1.5 ? 1 : 0.4);
   const sigma = (0.34 + 0.32 * (pspeed / PLAYER.vmax) + 0.6 * Math.max(0, reach / REACH - 0.55) + 0.25 * incoming / 40
       + 0.55 * Math.max(0, b.y - 1.5))
-    * (0.7 + power * 0.9 * (1 - 0.65 * comfort))
+    * (0.7 + pace * 0.9 * (1 - 0.65 * comfort))
     // volleys (no bounce) are much harder to control, especially against a fast ball
     * (b.bounces === 0 ? 1.5 + incoming / 25 : 1)
     // short "drop" targets need fine touch: aiming short is riskier than aiming deep
     * (1 + 1.8 * (1 - shot.depth) * (1 - shot.depth));
   lx += gaussian(m.rng) * sigma;
   lz += gaussian(m.rng) * sigma * 1.35;
-  let margin = 0.2 + shot.lift * 2.0;
+  let margin = 0, netMishit = false;
   // unforced errors: every stroke can be mishit; more likely under pressure (fast or high ball,
   // running, stretching). The mishit goes into the net or long/wide.
   const pressure = Math.min(1, incoming / 35 + 0.6 * pspeed / PLAYER.vmax + 1.2 * Math.max(0, reach / REACH - 0.6) + 0.8 * Math.max(0, b.y - 1.5));
   if (m.rng() < 0.015 + 0.05 * pressure) {
-    if (m.rng() < 0.5) { lz = 0.6; margin = -2; }                         // dumped into the net
+    if (m.rng() < 0.5) netMishit = true;                                   // dumped into the net
     else { lx += gaussian(m.rng) * 2.5; lz = COURT.halfL + 0.8 + m.rng() * 2.5; }   // sprayed long
     m.events.push({ type: 'mishit', side: p.side });
   }
-  const v = solveShot(b.x, b.y, b.z, lx * s, lz * s, speed, shot.spin, margin);
+  const v = solveByClearance(b.x, b.y, b.z, lx * s, lz * s, clearance, shot.spin);
+  // a mishit into the net: the same stroke, just hit too low
+  if (netMishit) {
+    // lower the launch just enough that the ball meets the net about halfway up
+    const tNet = Math.abs(b.z) / Math.max(1, Math.abs(v.vz));
+    v.vy -= (clearance + netHeight(b.x) * (0.4 + 0.3 * m.rng())) / tNet;
+  }
   b.vx = v.vx; b.vy = v.vy; b.vz = v.vz; b.spin = shot.spin;
   b.lastHitter = p.side; b.bounces = 0; b.serve = false;
   p.swing = 1;
