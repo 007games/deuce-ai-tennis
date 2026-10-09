@@ -1,7 +1,7 @@
 // DEUCE viewer: watch the self-trained AI play itself, or play against a saved champion yourself.
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { createMatch, step, aiController, pointLabel, DT, COURT, CONTACT_AHEAD } from '/shared/tennis.js';
+import { createMatch, step, aiController, pointLabel, DT, COURT, CONTACT_AHEAD, MIN_DEPTH } from '/shared/tennis.js';
 import { buildStadium } from './stadium.js';
 import { makePlayer } from './players3d.js';
 
@@ -169,7 +169,7 @@ const human = {
       const ax = Math.max(r0, Math.min(r1, this.aimX));
       return { aimX: ((ax - r0) / (r1 - r0)) * 2 - 1, depth: Math.max(0, Math.min(1, (Math.min(this.aimZ, 6.2) - 2.2) / (COURT.serviceZ - 2.5))), power: 0.62, spin: 0.25, lift: 0 };
     }
-    const base = { aimX: Math.max(-1, Math.min(1, this.aimX / (COURT.halfW - 0.35))), depth: Math.max(0, Math.min(1, (this.aimZ - 2) / (COURT.halfL - 2.5))) };
+    const base = { aimX: Math.max(-1, Math.min(1, this.aimX / (COURT.halfW - 0.35))), depth: Math.max(0, Math.min(1, (this.aimZ - MIN_DEPTH) / (COURT.halfL - MIN_DEPTH - 0.5))) };
     if (this.lob) return { ...base, power: 0.28, spin: 0.25, lift: 0.95 };
     if (this.slice) return { ...base, power: 0.45, spin: -0.7, lift: 0.2 };
     return { ...base, power: 0.66, spin: 0.55, lift: 0.12 };
@@ -205,7 +205,7 @@ function aimAt(clientX, clientY) {
   ray.setFromCamera(v, camera);
   if (!ray.ray.intersectPlane(ground, hitP)) return;
   human.aimX = Math.max(-COURT.halfW + 0.3, Math.min(COURT.halfW - 0.3, hitP.x));
-  human.aimZ = Math.max(1.6, Math.min(COURT.halfL - 0.4, hitP.z));
+  human.aimZ = Math.max(MIN_DEPTH, Math.min(COURT.halfL - 0.4, hitP.z));
 }
 $('view').addEventListener('pointermove', (e) => { if (mode === 'play' && e.pointerType === 'mouse') aimAt(e.clientX, e.clientY); });
 $('view').addEventListener('pointerdown', (e) => {

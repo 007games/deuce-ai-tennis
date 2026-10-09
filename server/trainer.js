@@ -12,7 +12,7 @@ import { mulberry32, gaussian, randomGenome, genomeSize } from '../shared/tennis
 const NAMES = ['Ace', 'Volley', 'Lob', 'Slice', 'Smash', 'Drop', 'Spin', 'Rally', 'Baseline', 'Net', 'Topspin', 'Chip', 'Kick', 'Flat', 'Swing', 'Deuce'];
 const FIRST = ['Rafa', 'Nina', 'Bjorn', 'Iga', 'Novak', 'Coco', 'Andy', 'Elena', 'Carlos', 'Aryna', 'Jannik', 'Ons', 'Holger', 'Mirra', 'Taylor', 'Leylah', 'Casper', 'Jasmine', 'Felix', 'Qinwen'];
 // bump when the game rules change: saved champions are re-rated under the new rules
-const RULES_VERSION = 2;
+const RULES_VERSION = 7;
 
 export const LEVEL_NAMES = ['Beginner', 'Novice', 'Club', 'Club+', 'County', 'Regional', 'National', 'Pro', 'Elite', 'Champion'];
 
@@ -122,7 +122,10 @@ export class League {
     const total = Math.max(1, s.total);
     const returnRate = s.servesFaced ? s.returnsIn / s.servesFaced : 0;
     // (no reward per racket contact: that was exploited by endless net volleys)
-    return s.points / total + 0.35 * returnRate + 0.02 * s.inPlay + 0.25 * s.approach - 0.02 * s.df;
+    // depth: real tennis is played from the baseline; reward balls landing beyond the service line
+    const deepRate = s.inPlay ? s.deepIn / s.inPlay : 0;
+    // outright winners: attacking tennis should pay off
+    return s.points / total + 0.35 * returnRate + 0.3 * deepRate + 0.25 * (s.winnersN || 0) / total + 0.02 * s.inPlay + 0.25 * s.approach - 0.02 * s.df;
   }
 
   async step() {

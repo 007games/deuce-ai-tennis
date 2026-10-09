@@ -8,8 +8,8 @@ export function playMatch(ga, gb, seed) {
   const m = createTiebreak(seed, 99);
   const c = [aiController(ga), aiController(gb)];
   let n = 0;
-  while (m.pointCount < POINTS && m.phase !== 'over' && n < 400000) { step(m, c); n++; }
-  return m.stats.map(s => ({ points: s.points, contacts: s.contacts, inPlay: s.inPlay, approach: s.chances ? s.approach / s.chances : 0, aces: s.aces, winners: s.winners, servesFaced: s.servesFaced, returnsIn: s.returnsIn, errors: s.errors, df: s.doubleFaults, total: m.pointCount }));
+  while (m.pointCount < POINTS && m.phase !== 'over' && n < 60000) { step(m, c); n++; }   // max 1000 game-seconds
+  return m.stats.map(s => ({ points: s.points, contacts: s.contacts, inPlay: s.inPlay, approach: s.chances ? s.approach / s.chances : 0, aces: s.aces, winners: s.winners, servesFaced: s.servesFaced, returnsIn: s.returnsIn, deepIn: s.deepIn, winnersN: s.winners + s.aces, errors: s.errors, df: s.doubleFaults, total: m.pointCount }));
 }
 
 parentPort.on('message', (job) => {

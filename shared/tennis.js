@@ -14,6 +14,7 @@ const MAGNUS = 0.0065;        // topspin dip per (m/s)^2
 const REACH = 1.45;           // racket reach (horizontal, m): arm + racket + a sideways lean
 export const CONTACT_AHEAD = 0.45;   // the ball is struck about this far in front of the body
 const PLAYER = { vmax: 7.4, acc: 22 };
+export const MIN_DEPTH = 4.5;  // shortest rally target from the net (m)
 const NET_GAP = 1.2;          // closest a player may stand to the net (m)
 const REACTION = 0.28;        // seconds a player needs after the opponent's shot before striking
 
@@ -134,7 +135,7 @@ export function createMatch({ seed = 1, format = { sets: 1, games: 4 }, training
 function newPlayer(side) {
   return { side, sign: side === 0 ? 1 : -1, x: 0, z: side === 0 ? -12 : 12, vx: 0, vz: 0, tx: 0, tz: 0, swing: 0, swingType: 0, lastDecision: 0, aim: null };
 }
-function newStats() { return { points: 0, contacts: 0, inPlay: 0, aces: 0, winners: 0, errors: 0, doubleFaults: 0, approach: 0, chances: 0, servesFaced: 0, returnsIn: 0 }; }
+function newStats() { return { points: 0, contacts: 0, inPlay: 0, aces: 0, winners: 0, errors: 0, doubleFaults: 0, approach: 0, chances: 0, servesFaced: 0, returnsIn: 0, deepIn: 0 }; }
 
 function deuceCourt(m) {
   const s = m.score;
@@ -290,7 +291,10 @@ export function aiController(genome) {
       think(genome, sense(m, p), out);
       // movement target in local coords on the player's own half
       p.tx = out[0] * 5.6 * p.sign;
-      p.tz = -(0.6 + (out[1] * 0.5 + 0.5) * 13.2) * p.sign;
+      // neutral output = just inside the baseline (the home position in real tennis);
+      // positive moves in towards the net, negative drops back behind the baseline
+      const o1 = out[1];
+      p.tz = -(o1 > 0 ? 11.2 - o1 * 9.4 : 11.2 - o1 * 3.8) * p.sign;
     },
     shot() {
       return { aimX: out[2], depth: out[3] * 0.5 + 0.5, power: out[4] * 0.5 + 0.5, spin: out[5], lift: out[6] * 0.5 + 0.5 };
@@ -429,6 +433,7 @@ function rallyStep(m, ctrls) {
           }
         }
         m.stats[b.lastHitter].inPlay++;
+        if (!b.serve && Math.abs(b.z) > COURT.serviceZ) m.stats[b.lastHitter].deepIn++;
         if (!b.serve && m.rallyHits === 1) m.stats[b.lastHitter].returnsIn++;   // serve returned into play
       } else {
         // second bounce: the receiver could not get it back
@@ -440,7 +445,9 @@ function rallyStep(m, ctrls) {
     }
   }
   // safety: ball leaving the stadium / dead ball
-  if (Math.abs(b.z) > 30 || Math.abs(b.x) > 20 || m.phaseT > 12) {
+  // safety net for a ball that left the stadium or is stuck: judged from the LAST shot, not the
+  // serve (a long rally is fine)
+  if (Math.abs(b.z) > 30 || Math.abs(b.x) > 20 || m.t - m.lastHitT > 6) {
     return pointTo(m, b.bounces === 0 ? 1 - b.lastHitter : b.lastHitter, 'out');
   }
   void pz;
@@ -479,15 +486,32 @@ function hit(m, p, c, reach) {
   const pspeed = Math.hypot(p.vx, p.vz);
   // target in the opponent's half (local z > 0)
   let lx = shot.aimX * (COURT.halfW - 0.35);
-  let lz = 2.0 + shot.depth * (COURT.halfL - 2.5);
+  let lz = MIN_DEPTH + shot.depth * (COURT.halfL - MIN_DEPTH - 0.5);
   const power = shot.power;
-  const speed = 14 + power * 24;
+  const speed = 17 + power * 21;
   // the harder the shot, the faster you were running, the further you stretch: the bigger the error
-  const sigma = (0.16 + 0.32 * (pspeed / PLAYER.vmax) + 0.6 * Math.max(0, reach / REACH - 0.55) + 0.25 * incoming / 40)
-    * (0.55 + power * 1.0);
+  // nobody is a machine: even an easy, slow ball has some scatter (base error), which ends rallies
+  // A slow ball at a comfortable height, taken while balanced, is a "sitter": it can be attacked
+  // hard without much extra risk. Balls above the shoulder are awkward.
+  const comfort = Math.max(0, 1 - incoming / 26) * Math.max(0, 1 - pspeed / 4) * (b.y > 0.6 && b.y < 1.5 ? 1 : 0.4);
+  const sigma = (0.34 + 0.32 * (pspeed / PLAYER.vmax) + 0.6 * Math.max(0, reach / REACH - 0.55) + 0.25 * incoming / 40
+      + 0.55 * Math.max(0, b.y - 1.5))
+    * (0.7 + power * 0.9 * (1 - 0.65 * comfort))
+    // volleys (no bounce) are much harder to control, especially against a fast ball
+    * (b.bounces === 0 ? 1.5 + incoming / 25 : 1)
+    // short "drop" targets need fine touch: aiming short is riskier than aiming deep
+    * (1 + 1.8 * (1 - shot.depth) * (1 - shot.depth));
   lx += gaussian(m.rng) * sigma;
   lz += gaussian(m.rng) * sigma * 1.35;
-  const margin = 0.2 + shot.lift * 3.2;
+  let margin = 0.2 + shot.lift * 2.0;
+  // unforced errors: every stroke can be mishit; more likely under pressure (fast or high ball,
+  // running, stretching). The mishit goes into the net or long/wide.
+  const pressure = Math.min(1, incoming / 35 + 0.6 * pspeed / PLAYER.vmax + 1.2 * Math.max(0, reach / REACH - 0.6) + 0.8 * Math.max(0, b.y - 1.5));
+  if (m.rng() < 0.015 + 0.05 * pressure) {
+    if (m.rng() < 0.5) { lz = 0.6; margin = -2; }                         // dumped into the net
+    else { lx += gaussian(m.rng) * 2.5; lz = COURT.halfL + 0.8 + m.rng() * 2.5; }   // sprayed long
+    m.events.push({ type: 'mishit', side: p.side });
+  }
   const v = solveShot(b.x, b.y, b.z, lx * s, lz * s, speed, shot.spin, margin);
   b.vx = v.vx; b.vy = v.vy; b.vz = v.vz; b.spin = shot.spin;
   b.lastHitter = p.side; b.bounces = 0; b.serve = false;

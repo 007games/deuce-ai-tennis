@@ -6,6 +6,8 @@ const N = +(process.argv[2] || 20);
 for (let i = 0; i < N; i++) {
   await lg.step();
   const h = lg.history[lg.history.length - 1];
-  if (i % 3 === 0 || i === N - 1) console.log(`gen ${h.g} shots/point ${h.rally} returns ${(h.ret * 100).toFixed(0)}% best ${h.best} ${h.ms}ms`);
+  if (i % 10 === 9) lg.save();
+  if (i % 10 === 0 || i === N - 1) console.log(`gen ${h.g} shots/point ${h.rally} returns ${(h.ret * 100).toFixed(0)}% best ${h.best} ${h.ms}ms`);
 }
+lg.save();
 process.exit(0);
