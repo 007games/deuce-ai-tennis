@@ -334,10 +334,20 @@ function updateScore() {
 // --- render loop -----------------------------------------------------------------------------------------
 let last = performance.now(), matchEndT = 0;
 const ballPrev = new THREE.Vector3();
+// ?capture=1: no real-time loop; a recorder calls window.__advance(dt) for perfectly even frames
+const CAPTURE = new URLSearchParams(location.search).has('capture');
+if (CAPTURE) document.body.classList.add('capture');
+window.__advance = (dt) => tick(dt);
+window.__state = () => (match ? { phase: match.phase, hits: match.rallyHits, points: match.pointCount } : null);
+
 function frame(now) {
-  requestAnimationFrame(frame);
+  if (!CAPTURE) requestAnimationFrame(frame);
   const dt = Math.min((now - last) / 1000, 0.1);
   last = now;
+  if (!CAPTURE) tick(dt);
+}
+
+function tick(dt) {
   if (match) {
     if (mode === 'play') readKeys();
     acc += dt * speed;

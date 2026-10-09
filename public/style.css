@@ -74,6 +74,7 @@ kbd { background: rgba(255,255,255,.12); border-radius: 4px; padding: 1px 5px; f
 .quit2 { all: unset; display: none; }
 body.playing .quit2 { display: block; position: absolute; right: 8px; top: 8px; cursor: pointer; padding: 6px 12px; border-radius: 9px; background: rgba(8,14,30,.8); border: 1px solid rgba(255,255,255,.15); font-size: 12px; font-weight: 700; }
 @media (min-width: 1001px) and (min-height: 561px) { body.playing .quit2 { display: none; } }
+body.capture .panel, body.capture .train, body.capture .fs, body.capture #keys { display: none !important; }
 #loading { position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; gap: 14px; background: #0a1224; z-index: 10; transition: opacity .6s; }
 #loading.hide { opacity: 0; pointer-events: none; }
 #loading p { color: var(--dim); margin: 0; letter-spacing: .08em; }

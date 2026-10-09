@@ -1,5 +1,10 @@
 # DEUCE — AI tennis that teaches itself
 
+![Two self-taught AI players rallying on centre court](docs/deuce.gif)
+
+**▶ Play / watch live: [brooks-cart-condos-temporal.trycloudflare.com](https://brooks-cart-condos-temporal.trycloudflare.com)**
+<sub>Temporary address: it is served from the training PC through a Cloudflare quick tunnel and changes when that PC restarts.</sub>
+
 Two AI players learn tennis by playing each other (self-play neuroevolution). Champions are saved
 as they improve and become 10 difficulty levels you can play against in the browser.
 
